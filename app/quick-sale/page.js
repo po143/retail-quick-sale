@@ -4,29 +4,71 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import supabase from "@/lib/supabaseClient";
 
+/* ---------------- OFFLINE QUEUE HELPERS ---------------- */
+const OFFLINE_QUEUE_KEY = "offline_sales_queue";
+
+const saveOfflineSale = (sale) => {
+  const existing =
+    JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY)) || [];
+  existing.push(sale);
+  localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(existing));
+};
+
+const getOfflineSales = () => {
+  return JSON.parse(localStorage.getItem(OFFLINE_QUEUE_KEY)) || [];
+};
+
+const clearOfflineSales = () => {
+  localStorage.removeItem(OFFLINE_QUEUE_KEY);
+};
+
+/* ---------------- COMPONENT ---------------- */
 export default function QuickSalePage() {
-  /* ---------------- STATE ---------------- */
   const [skus, setSkus] = useState([]);
   const [selectedSku, setSelectedSku] = useState(null);
 
   const [qty, setQty] = useState(1);
   const [price, setPrice] = useState("");
 
-  /* ---------------- FETCH RETAIL SKUs ---------------- */
+  /* ---------------- FETCH SKUS ---------------- */
   useEffect(() => {
     const fetchSkus = async () => {
-      const { data, error } = await supabase
+      const { data } = await supabase
         .from("retail_skus")
         .select("*")
         .eq("is_active", true)
         .order("sku_name");
 
-      if (!error) {
-        setSkus(data || []);
-      }
+      setSkus(data || []);
     };
 
     fetchSkus();
+  }, []);
+
+  /* ---------------- AUTO SYNC OFFLINE SALES ---------------- */
+  useEffect(() => {
+    const syncOfflineSales = async () => {
+      if (!navigator.onLine) return;
+
+      const offlineSales = getOfflineSales();
+      if (!offlineSales.length) return;
+
+      const { error } = await supabase
+        .from("quick_sales")
+        .insert(offlineSales);
+
+      if (!error) {
+        clearOfflineSales();
+        console.log("✅ Offline sales synced");
+      }
+    };
+
+    window.addEventListener("online", syncOfflineSales);
+    syncOfflineSales();
+
+    return () => {
+      window.removeEventListener("online", syncOfflineSales);
+    };
   }, []);
 
   /* ---------------- HELPERS ---------------- */
@@ -43,19 +85,32 @@ export default function QuickSalePage() {
   const confirmSale = async () => {
     if (!selectedSku || !qty || !price) return;
 
-    const { error } = await supabase.from("quick_sales").insert({
+    const sale = {
       sku_name: selectedSku,
       quantity: Number(qty),
       price_per_unit: Number(price),
       total_amount: Number(total),
-    });
+      sale_timestamp: new Date().toISOString(),
+    };
 
-    if (error) {
-      alert("❌ Sale not recorded. Check internet connection.");
+    // OFFLINE MODE
+    if (!navigator.onLine) {
+      saveOfflineSale(sale);
+      alert("📴 Offline: Sale saved locally");
+      reset();
       return;
     }
 
-    reset(); // ready for next sale
+    // ONLINE MODE
+    const { error } = await supabase.from("quick_sales").insert(sale);
+
+    if (error) {
+      saveOfflineSale(sale);
+      alert("📴 Network issue: Sale saved locally");
+      return;
+    }
+
+    reset();
   };
 
   /* ---------------- UI ---------------- */
@@ -72,7 +127,6 @@ export default function QuickSalePage() {
           >
             Retail SKUs
           </Link>
-
           <Link
             href="/daily-sales"
             className="px-3 py-1 bg-gray-200 rounded text-sm"
