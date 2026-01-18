@@ -1,106 +1,151 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import supabase from "@/app/lib/supabaseClient";
 import Link from "next/link";
-import supabase from "@/lib/supabaseClient";
 
 export default function RetailSkusPage() {
   const [skus, setSkus] = useState([]);
-  const [newSku, setNewSku] = useState("");
+  const [skuName, setSkuName] = useState("");
+  const [unit, setUnit] = useState("pcs");
+  const [loading, setLoading] = useState(false);
 
-  /* ---------------- FETCH SKUS ---------------- */
+  // Fetch SKUs
   const fetchSkus = async () => {
     const { data, error } = await supabase
       .from("retail_skus")
       .select("*")
-      .order("created_at", { ascending: false });
+      .order("sku_name", { ascending: true });
 
-    if (!error) {
-      setSkus(data || []);
+    if (error) {
+      console.error(error);
+      alert(error.message);
+      return;
     }
+
+    setSkus(data || []);
   };
 
   useEffect(() => {
     fetchSkus();
   }, []);
 
-  /* ---------------- ADD SKU ---------------- */
-  const addSku = async () => {
-    if (!newSku.trim()) return;
+  // Add SKU
+  const addSku = async (e) => {
+    e.preventDefault();
 
-    const { error } = await supabase.from("retail_skus").insert({
-      sku_name: newSku.trim(),
-    });
-
-    if (!error) {
-      setNewSku("");
-      fetchSkus();
+    if (!skuName.trim()) {
+      alert("SKU name cannot be empty");
+      return;
     }
+
+    setLoading(true);
+
+    const { error } = await supabase
+      .from("retail_skus")
+      .insert([
+        {
+          sku_name: skuName.trim(),
+          unit: unit,
+        },
+      ]);
+
+    setLoading(false);
+
+    if (error) {
+      console.error(error);
+      alert(error.message);
+      return;
+    }
+
+    setSkuName("");
+    setUnit("pcs");
+    fetchSkus();
   };
 
-  /* ---------------- ENABLE / DISABLE SKU ---------------- */
-  const toggleSku = async (id, is_active) => {
-    await supabase
+  // Toggle enable / disable
+  const toggleSku = async (id, currentStatus) => {
+    const { error } = await supabase
       .from("retail_skus")
-      .update({ is_active: !is_active })
+      .update({ is_active: !currentStatus })
       .eq("id", id);
+
+    if (error) {
+      console.error(error);
+      alert(error.message);
+      return;
+    }
 
     fetchSkus();
   };
 
-  /* ---------------- UI ---------------- */
   return (
-    <div className="p-6 max-w-xl mx-auto">
-      {/* BACK */}
-      <Link
-        href="/quick-sale"
-        className="inline-block mb-4 text-sm underline text-blue-600"
-      >
-        ← Back to Quick Sale
-      </Link>
+    <div style={{ maxWidth: "600px", margin: "20px auto" }}>
+      <Link href="/quick-sale">← Back to Quick Sale</Link>
 
-      <h1 className="text-xl font-bold mb-4">
+      <h2 style={{ marginTop: "10px" }}>
         Retail SKUs (Allowed to Sell)
-      </h1>
+      </h2>
 
-      {/* ADD SKU */}
-      <div className="flex gap-2 mb-6">
+      {/* Add SKU */}
+      <form onSubmit={addSku} style={{ marginTop: "20px" }}>
         <input
-          value={newSku}
-          onChange={(e) => setNewSku(e.target.value)}
+          type="text"
           placeholder="New SKU name"
-          className="border p-2 flex-1 rounded"
+          value={skuName}
+          onChange={(e) => setSkuName(e.target.value)}
+          style={{ padding: "8px", width: "55%", marginRight: "10px" }}
         />
-        <button
-          onClick={addSku}
-          className="bg-black text-white px-4 rounded"
-        >
-          Add
-        </button>
-      </div>
 
-      {/* SKU LIST */}
-      <div className="space-y-3">
+        <select
+          value={unit}
+          onChange={(e) => setUnit(e.target.value)}
+          style={{ padding: "8px", marginRight: "10px" }}
+        >
+          <option value="pcs">pcs</option>
+          <option value="kg">kg</option>
+          <option value="gm">gm</option>
+          <option value="ltr">ltr</option>
+        </select>
+
+        <button type="submit" disabled={loading}>
+          {loading ? "Adding..." : "Add"}
+        </button>
+      </form>
+
+      {/* SKU List */}
+      <div style={{ marginTop: "30px" }}>
         {skus.map((sku) => (
           <div
             key={sku.id}
-            className="flex justify-between items-center border p-3 rounded"
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "10px",
+              border: "1px solid #ddd",
+              borderRadius: "6px",
+              marginBottom: "10px",
+            }}
           >
-            <span
-              className={`font-medium ${
-                sku.is_active ? "" : "line-through text-gray-400"
-              }`}
-            >
-              {sku.sku_name}
-            </span>
+            <div>
+              <strong>{sku.sku_name}</strong>{" "}
+              <span style={{ color: "#666" }}>
+                ({sku.unit})
+              </span>
+              {!sku.is_active && (
+                <span style={{ color: "#999" }}> — inactive</span>
+              )}
+            </div>
 
             <button
               onClick={() => toggleSku(sku.id, sku.is_active)}
-              className={`px-3 py-1 rounded text-sm ${
-                sku.is_active
-                  ? "bg-red-100 text-red-600"
-                  : "bg-green-100 text-green-700"
-              }`}
+              style={{
+                background: sku.is_active ? "#ffe5e5" : "#e5ffe5",
+                border: "none",
+                padding: "6px 12px",
+                cursor: "pointer",
+              }}
             >
               {sku.is_active ? "Disable" : "Enable"}
             </button>

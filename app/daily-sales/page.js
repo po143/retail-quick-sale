@@ -1,116 +1,182 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import supabase from "@/app/lib/supabaseClient";
 import Link from "next/link";
-import supabase from "@/lib/supabaseClient";
-
-/* ---------------- CSV HELPER ---------------- */
-const downloadCSV = (rows) => {
-  if (!rows.length) return;
-
-  const headers = [
-    "SKU Name",
-    "Quantity",
-    "Price Per Unit",
-    "Total Amount",
-    "Time",
-  ];
-
-  const csv = [
-    headers.join(","),
-    ...rows.map((r) =>
-      [
-        r.sku_name,
-        r.quantity,
-        r.price_per_unit,
-        r.total_amount,
-        new Date(r.sale_timestamp).toLocaleTimeString(),
-      ].join(",")
-    ),
-  ].join("\n");
-
-  const blob = new Blob([csv], { type: "text/csv" });
-  const url = window.URL.createObjectURL(blob);
-
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "today_sales.csv";
-  a.click();
-
-  window.URL.revokeObjectURL(url);
-};
 
 export default function DailySalesPage() {
   const [sales, setSales] = useState([]);
-  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+  // Fetch sales (today + yesterday)
+  const fetchSales = async () => {
+    setLoading(true);
+
+    const { data, error } = await supabase
+      .from("quick_sales")
+      .select("*")
+      .order("sale_timestamp", { ascending: false });
+
+    if (error) {
+      console.error(error);
+      alert(error.message);
+      return;
+    }
+
+    setSales(data || []);
+    setLoading(false);
+  };
 
   useEffect(() => {
-    const fetchTodaySales = async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const { data, error } = await supabase
-        .from("quick_sales")
-        .select("*")
-        .gte("sale_timestamp", today.toISOString())
-        .order("sale_timestamp", { ascending: false });
-
-      if (!error) {
-        setSales(data || []);
-        setTotal(
-          data?.reduce(
-            (sum, r) => sum + Number(r.total_amount),
-            0
-          ) || 0
-        );
-      }
-    };
-
-    fetchTodaySales();
+    fetchSales();
   }, []);
 
-  /* ---------------- UI ---------------- */
+  // Delete ONLY today's sale (DB enforces this)
+  const deleteSale = async (id) => {
+    const confirmDelete = confirm(
+      "Delete this sale?\nOnly today's sales can be deleted."
+    );
+
+    if (!confirmDelete) return;
+
+    const { error } = await supabase
+      .from("quick_sales")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      alert("This sale cannot be deleted.");
+      return;
+    }
+
+    fetchSales();
+  };
+
+  // CSV Export (today only)
+  const exportCSV = () => {
+    const todaySales = sales.filter(
+      (s) => s.sale_timestamp.slice(0, 10) === today
+    );
+
+    if (!todaySales.length) {
+      alert("No sales for today");
+      return;
+    }
+
+    const headers = [
+      "SKU Name",
+      "Quantity",
+      "Price Per Unit",
+      "Total Amount",
+      "Timestamp",
+    ];
+
+    const rows = todaySales.map((s) => [
+      s.sku_name,
+      s.quantity,
+      s.price_per_unit,
+      s.total_amount,
+      s.sale_timestamp,
+    ]);
+
+    const csv =
+      [headers, ...rows]
+        .map((row) => row.join(","))
+        .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `daily_sales_${today}.csv`;
+    a.click();
+
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <div className="p-6 max-w-2xl mx-auto">
-      {/* BACK */}
-      <Link
-        href="/quick-sale"
-        className="inline-block mb-4 text-sm underline text-blue-600"
-      >
-        ← Back to Quick Sale
-      </Link>
+    <div style={{ maxWidth: "900px", margin: "20px auto" }}>
+      <Link href="/quick-sale">← Back to Quick Sale</Link>
 
-      <h1 className="text-xl font-bold mb-2">Today’s Sales</h1>
-
-      <div className="text-lg font-semibold mb-4">
-        Total: ₹ {total.toFixed(2)}
-      </div>
+      <h2 style={{ marginTop: "10px" }}>Daily Sales</h2>
 
       <button
-        onClick={() => downloadCSV(sales)}
-        className="mb-4 bg-blue-600 text-white px-4 py-2 rounded"
+        onClick={exportCSV}
+        style={{ marginBottom: "15px" }}
       >
-        Download CSV
+        Export Today CSV
       </button>
 
-      <div className="space-y-2">
-        {sales.map((s, i) => (
-          <div
-            key={i}
-            className="flex justify-between items-center border p-3 rounded"
-          >
-            <div>
-              <div className="font-medium">{s.sku_name}</div>
-              <div className="text-xs text-gray-500">
-                Qty: {s.quantity}
-              </div>
-            </div>
-            <div className="font-semibold">
-              ₹ {s.total_amount}
-            </div>
-          </div>
-        ))}
-      </div>
+      {loading ? (
+        <p>Loading sales...</p>
+      ) : (
+        <table
+          style={{
+            width: "100%",
+            borderCollapse: "collapse",
+          }}
+        >
+          <thead>
+            <tr>
+              <th align="left">SKU</th>
+              <th align="right">Qty</th>
+              <th align="right">Price</th>
+              <th align="right">Total</th>
+              <th align="left">Date</th>
+              <th></th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {sales.map((sale) => {
+              const saleDate =
+                sale.sale_timestamp.slice(0, 10);
+              const isToday = saleDate === today;
+
+              return (
+                <tr
+                  key={sale.id}
+                  style={{
+                    borderBottom: "1px solid #eee",
+                  }}
+                >
+                  <td>{sale.sku_name}</td>
+                  <td align="right">
+                    {sale.quantity}
+                  </td>
+                  <td align="right">
+                    ₹{sale.price_per_unit}
+                  </td>
+                  <td align="right">
+                    ₹{sale.total_amount}
+                  </td>
+                  <td>{saleDate}</td>
+                  <td>
+                    {isToday && (
+                      <button
+                        onClick={() =>
+                          deleteSale(sale.id)
+                        }
+                        style={{
+                          background: "#ffe5e5",
+                          border: "none",
+                          padding: "4px 8px",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
